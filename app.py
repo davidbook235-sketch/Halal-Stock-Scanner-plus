@@ -2,14 +2,14 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ============ PAGE CONFIG (Mobile-First) ============
 st.set_page_config(
     page_title="Halal Swing Scanner",
     page_icon="📈",
-    layout="centered",  # centered works better on mobile
-    initial_sidebar_state="collapsed"  # collapse sidebar on mobile
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
 # ============ MOBILE RESPONSIVE CSS ============
@@ -22,8 +22,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============ HALAL STOCK UNIVERSE (Nifty 500 Shariah subset) ============
-# In production, fetch from Nifty Shariah factsheet or use curated list
+# ============ HALAL STOCK UNIVERSE ============
+# NOTE: Ye ek chhoti list hai. Aap ise Nifty 500 Shariah Index se update kar sakte hain.
 HALAL_STOCKS = [
     "TCS.NS", "INFY.NS", "HCLTECH.NS", "TECHM.NS", "LTIM.NS",
     "HINDUNILVR.NS", "NESTLEIND.NS", "BRITANNIA.NS", "DABUR.NS",
@@ -71,6 +71,11 @@ def scan_stock(symbol):
         df = yf.download(symbol, period="3mo", interval="1d", progress=False)
         if df.empty or len(df) < 50:
             return None
+        
+        # FIX: yfinance kabhi multi-index columns return karta hai, usko flatten karo
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         df = compute_indicators(df)
         latest = df.iloc[-1]
         
@@ -81,7 +86,6 @@ def scan_stock(symbol):
         adx_ok = latest['ADX'] > 20
         vol_ok = latest['Volume'] > latest['Vol_Avg']
         
-        # Score
         score = sum([rsi_ok, trend_ok, macd_ok, adx_ok, vol_ok])
         
         return {
@@ -92,10 +96,12 @@ def scan_stock(symbol):
             'EMA_Trend': '✅' if trend_ok else '❌',
             'MACD': '✅' if macd_ok else '❌',
             'Volume': '✅' if vol_ok else '❌',
-            'Score': score,
+            'Score': int(score),
             'Signal': '🟢 BUY' if score >= 4 else ('🟡 WATCH' if score >= 3 else '⚪ NEUTRAL')
         }
-    except:
+    except Exception as e:
+        # FIX: Error ko print karo taaki pata chale kya problem hai
+        print(f"Error fetching {symbol}: {e}")
         return None
 
 # ============ UI ============
@@ -103,22 +109,32 @@ st.title("📈 Halal Swing Scanner")
 st.caption("NSE Shariah-Compliant Stocks • Live Swing Trade Signals")
 
 if st.button("🔍 Run Live Scan", use_container_width=True):
-    with st.spinner("Scanning halal stocks..."):
+    with st.spinner("Scanning halal stocks... Please wait."):
         results = []
         for sym in HALAL_STOCKS:
             r = scan_stock(sym)
             if r:
                 results.append(r)
-        results.sort(key=lambda x: x['Score'], reverse=True)
-        df_res = pd.DataFrame(results)
         
-        # Display top picks
-        buys = df_res[df_res['Signal'] == '🟢 BUY']
-        if not buys.empty:
-            st.subheader("🎯 Top Swing Picks")
-            st.dataframe(buys, use_container_width=True, hide_index=True)
-        
-        st.subheader("📊 Full Scan Results")
-        st.dataframe(df_res, use_container_width=True, hide_index=True)
-        
-        st.caption(f"Scanned {len(results)} halal stocks • {datetime.now().strftime('%d %b %Y, %I:%M %p')}")
+        # FIX 1: Check karo ki results empty toh nahi hain
+        if not results:
+            st.warning("⚠️ Koi data nahi mila. Internet connection check karo, ya thodi der baad try karo. (Market band hone par bhi aisa ho sakta hai)")
+        else:
+            results.sort(key=lambda x: x['Score'], reverse=True)
+            df_res = pd.DataFrame(results)
+            
+            # FIX 2: Check karo ki 'Signal' column exist karta hai ya nahi
+            if 'Signal' in df_res.columns:
+                buys = df_res[df_res['Signal'] == '🟢 BUY']
+                if not buys.empty:
+                    st.subheader("🎯 Top Swing Picks")
+                    st.dataframe(buys, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aaj koi strong BUY signal nahi mila. Neeche poore results dekho.")
+                
+                st.subheader("📊 Full Scan Results")
+                st.dataframe(df_res, use_container_width=True, hide_index=True)
+                
+                st.caption(f"Scanned {len(results)} halal stocks • {datetime.now().strftime('%d %b %Y, %I:%M %p')}")
+            else:
+                st.error("Data mila lekin columns missing hain. Code dobara check karo.")
